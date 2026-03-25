@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Generate consolidated Excel with all invoices, each date as a column, sorted by code."""
+"""Generate consolidated Excel with all invoices, with Invoice Date column, sorted by date (oldest first)."""
 
 import openpyxl
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-from collections import OrderedDict
 
 wb = openpyxl.Workbook()
 ws = wb.active
 ws.title = "Invoice Summary"
 
-# === Invoice Data (sorted by date) ===
+# === All 3 invoices data ===
 invoices = [
     {
         'date': '01/02/2026',
@@ -81,21 +80,30 @@ invoices = [
     },
 ]
 
-# Collect all unique products (code -> description, unit, price)
-all_products = OrderedDict()
+# Sort invoices by date (oldest first: dd/mm/yyyy)
+invoices.sort(key=lambda inv: tuple(reversed(inv['date'].split('/'))))
+
+# Flatten all rows: each item gets an Invoice Date column
+all_rows = []
 for inv in invoices:
     for code, desc, unit, price, qty, amt in inv['items']:
-        if code not in all_products:
-            all_products[code] = (desc, unit, price)
-
-# Sort by code
-sorted_codes = sorted(all_products.keys())
+        all_rows.append({
+            'date': inv['date'],
+            'invoice_no': inv['invoice_no'],
+            'note': inv['note'],
+            'code': code,
+            'desc': desc,
+            'unit': unit,
+            'price': price,
+            'qty': qty,
+            'amt': amt,
+        })
 
 # Styles
 title_font = Font(name='Arial', size=14, bold=True)
 header_font = Font(name='Arial', size=10, bold=True)
+header_font_white = Font(name='Arial', size=10, bold=True, color='FFFFFF')
 normal_font = Font(name='Arial', size=10)
-small_font = Font(name='Arial', size=9)
 thin_border = Border(
     left=Side(style='thin'), right=Side(style='thin'),
     top=Side(style='thin'), bottom=Side(style='thin')
@@ -104,265 +112,209 @@ center = Alignment(horizontal='center', vertical='center')
 left_align = Alignment(horizontal='left', vertical='center')
 right_align = Alignment(horizontal='right', vertical='center')
 header_fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
-header_font_white = Font(name='Arial', size=10, bold=True, color='FFFFFF')
-date_fill = PatternFill(start_color='D6E4F0', end_color='D6E4F0', fill_type='solid')
 subtotal_fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
 total_fill = PatternFill(start_color='E2EFDA', end_color='E2EFDA', fill_type='solid')
+# Alternating date group colors
+date_colors = [
+    PatternFill(start_color='FFFFFF', end_color='FFFFFF', fill_type='solid'),
+    PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid'),
+]
 
 # Column widths
-ws.column_dimensions['A'].width = 6
-ws.column_dimensions['B'].width = 12
-ws.column_dimensions['C'].width = 45
-ws.column_dimensions['D'].width = 8
-ws.column_dimensions['E'].width = 10
-
-# Date columns: each date has 2 sub-columns (QTY, AMOUNT)
-num_dates = len(invoices)
-for i in range(num_dates):
-    col_qty = chr(ord('F') + i * 2)
-    col_amt = chr(ord('G') + i * 2)
-    ws.column_dimensions[col_qty].width = 10
-    ws.column_dimensions[col_amt].width = 12
-
-# Last column for total
-total_col_idx = 6 + num_dates * 2
-total_col = chr(ord('A') + total_col_idx - 1)  # 'L'
-ws.column_dimensions[total_col].width = 14
+ws.column_dimensions['A'].width = 6     # No.
+ws.column_dimensions['B'].width = 14    # Invoice Date
+ws.column_dimensions['C'].width = 16    # Invoice No.
+ws.column_dimensions['D'].width = 12    # Code
+ws.column_dimensions['E'].width = 45    # Description
+ws.column_dimensions['F'].width = 8     # QTY
+ws.column_dimensions['G'].width = 8     # UNIT
+ws.column_dimensions['H'].width = 10    # U_PRICE
+ws.column_dimensions['I'].width = 12    # AMOUNT
 
 # === Title ===
-row = 1
-last_col = chr(ord('A') + total_col_idx - 1)
-ws.merge_cells(f'A1:{last_col}1')
+ws.merge_cells('A1:I1')
 ws['A1'] = '豆福食品制造有限公司 DOLFORD FOOD MANUFACTURING PTE LTD - Invoice Summary'
 ws['A1'].font = title_font
 ws['A1'].alignment = center
 
-ws.merge_cells(f'A2:{last_col}2')
+ws.merge_cells('A2:I2')
 ws['A2'] = 'Customer: ZHANG LIANG MALA TANG 张亮麻辣烫 (远东广场)  |  Customer ID: ZLML07  |  Term: 30 DAYS'
 ws['A2'].font = Font(name='Arial', size=10)
 ws['A2'].alignment = center
 
-# === Header Row 1: Date groups ===
+# === Header Row ===
 row = 4
-
-# Fixed columns header
-fixed_headers_r1 = ['No.', 'Code', 'ITEM NAME / DESCRIPTION 货名/摘要', 'UNIT 单位', 'U_PRICE 单价']
-for col_idx, h in enumerate(fixed_headers_r1, 1):
+headers = [
+    ('No.', center),
+    ('Invoice Date\n发票日期', center),
+    ('Invoice No.\n发票号码', center),
+    ('Code\n编码', center),
+    ('ITEM NAME / DESCRIPTION\n货名/摘要', center),
+    ('QTY\n数量', center),
+    ('UNIT\n单位', center),
+    ('U_PRICE\n单价', center),
+    ('AMOUNT($)\n金额', center),
+]
+for col_idx, (h, align) in enumerate(headers, 1):
     cell = ws.cell(row=row, column=col_idx, value=h)
     cell.font = header_font_white
     cell.fill = header_fill
     cell.border = thin_border
-    cell.alignment = center
-
-# Date group headers
-for i, inv in enumerate(invoices):
-    col_start = 6 + i * 2
-    col_end = col_start + 1
-    col_start_letter = chr(ord('A') + col_start - 1)
-    col_end_letter = chr(ord('A') + col_end - 1)
-    ws.merge_cells(f'{col_start_letter}{row}:{col_end_letter}{row}')
-    cell = ws.cell(row=row, column=col_start)
-    label = f"{inv['date']}\n{inv['invoice_no']}"
-    if inv['note']:
-        label += f"\n({inv['note']})"
-    cell.value = label
-    cell.font = header_font_white
-    cell.fill = header_fill
-    cell.border = thin_border
     cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-    # Border for merged cell right side
-    ws.cell(row=row, column=col_end).border = thin_border
-
-# Total column header
-cell = ws.cell(row=row, column=total_col_idx, value='TOTAL\n合计')
-cell.font = header_font_white
-cell.fill = header_fill
-cell.border = thin_border
-cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-
-ws.row_dimensions[row].height = 45
-
-# === Header Row 2: Sub-headers ===
-row = 5
-sub_headers_fixed = ['', '', '', '', '']
-for col_idx, h in enumerate(sub_headers_fixed, 1):
-    cell = ws.cell(row=row, column=col_idx)
-    cell.border = thin_border
-    cell.fill = date_fill
-
-for i in range(num_dates):
-    col_qty = 6 + i * 2
-    col_amt = col_qty + 1
-    cell_q = ws.cell(row=row, column=col_qty, value='QTY 数量')
-    cell_q.font = header_font; cell_q.fill = date_fill; cell_q.border = thin_border; cell_q.alignment = center
-    cell_a = ws.cell(row=row, column=col_amt, value='AMOUNT 金额')
-    cell_a.font = header_font; cell_a.fill = date_fill; cell_a.border = thin_border; cell_a.alignment = center
-
-cell_t = ws.cell(row=row, column=total_col_idx, value='AMOUNT 金额')
-cell_t.font = header_font; cell_t.fill = date_fill; cell_t.border = thin_border; cell_t.alignment = center
+ws.row_dimensions[row].height = 35
 
 # === Data Rows ===
-row = 6
-for idx, code in enumerate(sorted_codes):
-    desc, unit, price = all_products[code]
+row = 5
+# Track date groups for alternating colors
+date_list = []
+for inv in invoices:
+    if inv['date'] not in date_list:
+        date_list.append(inv['date'])
+
+for idx, item in enumerate(all_rows):
     r = row + idx
     ws.row_dimensions[r].height = 20
+    date_idx = date_list.index(item['date'])
+    row_fill = date_colors[date_idx % 2]
 
-    ws.cell(row=r, column=1, value=idx + 1).font = normal_font
-    ws.cell(row=r, column=1).alignment = center
-    ws.cell(row=r, column=1).border = thin_border
+    # No.
+    cell = ws.cell(row=r, column=1, value=idx + 1)
+    cell.font = normal_font; cell.alignment = center; cell.border = thin_border; cell.fill = row_fill
 
-    ws.cell(row=r, column=2, value=code).font = normal_font
-    ws.cell(row=r, column=2).alignment = left_align
-    ws.cell(row=r, column=2).border = thin_border
+    # Invoice Date
+    date_label = item['date']
+    if item['note']:
+        date_label += f" ({item['note']})"
+    cell = ws.cell(row=r, column=2, value=date_label)
+    cell.font = normal_font; cell.alignment = center; cell.border = thin_border; cell.fill = row_fill
 
-    ws.cell(row=r, column=3, value=desc).font = normal_font
-    ws.cell(row=r, column=3).alignment = left_align
-    ws.cell(row=r, column=3).border = thin_border
+    # Invoice No.
+    cell = ws.cell(row=r, column=3, value=item['invoice_no'])
+    cell.font = normal_font; cell.alignment = center; cell.border = thin_border; cell.fill = row_fill
 
-    ws.cell(row=r, column=4, value=unit).font = normal_font
-    ws.cell(row=r, column=4).alignment = center
-    ws.cell(row=r, column=4).border = thin_border
+    # Code
+    cell = ws.cell(row=r, column=4, value=item['code'])
+    cell.font = normal_font; cell.alignment = left_align; cell.border = thin_border; cell.fill = row_fill
 
-    price_cell = ws.cell(row=r, column=5, value=price)
-    price_cell.font = normal_font
-    price_cell.alignment = right_align
-    price_cell.border = thin_border
-    price_cell.number_format = '#,##0.00'
+    # Description
+    cell = ws.cell(row=r, column=5, value=item['desc'])
+    cell.font = normal_font; cell.alignment = left_align; cell.border = thin_border; cell.fill = row_fill
 
-    row_total = 0
-    for i, inv in enumerate(invoices):
-        col_qty = 6 + i * 2
-        col_amt = col_qty + 1
+    # QTY
+    cell = ws.cell(row=r, column=6, value=item['qty'])
+    cell.font = normal_font; cell.alignment = center; cell.border = thin_border; cell.fill = row_fill
+    cell.number_format = '0.00'
 
-        # Find this code in this invoice
-        found_qty = None
-        found_amt = None
-        for ic, idesc, iunit, iprice, iqty, iamt in inv['items']:
-            if ic == code:
-                found_qty = iqty
-                found_amt = iamt
-                break
+    # UNIT
+    cell = ws.cell(row=r, column=7, value=item['unit'])
+    cell.font = normal_font; cell.alignment = center; cell.border = thin_border; cell.fill = row_fill
 
-        cell_q = ws.cell(row=r, column=col_qty)
-        cell_q.border = thin_border
-        cell_q.alignment = center
-        cell_q.font = normal_font
+    # U_PRICE
+    cell = ws.cell(row=r, column=8, value=item['price'])
+    cell.font = normal_font; cell.alignment = right_align; cell.border = thin_border; cell.fill = row_fill
+    cell.number_format = '#,##0.00'
 
-        cell_a = ws.cell(row=r, column=col_amt)
-        cell_a.border = thin_border
-        cell_a.alignment = right_align
-        cell_a.font = normal_font
-        cell_a.number_format = '#,##0.00'
+    # AMOUNT
+    cell = ws.cell(row=r, column=9, value=item['amt'])
+    cell.font = normal_font; cell.alignment = right_align; cell.border = thin_border; cell.fill = row_fill
+    cell.number_format = '#,##0.00'
 
-        if found_qty is not None:
-            cell_q.value = found_qty
-            cell_q.number_format = '0.00'
-        if found_amt is not None:
-            cell_a.value = found_amt
-            row_total += found_amt
+# === Per-invoice subtotal rows ===
+current_row = row + len(all_rows)
 
-    # Total column
-    total_cell = ws.cell(row=r, column=total_col_idx, value=row_total if row_total > 0 else None)
-    total_cell.font = Font(name='Arial', size=10, bold=True)
-    total_cell.alignment = right_align
-    total_cell.border = thin_border
-    total_cell.number_format = '#,##0.00'
+# Insert subtotal for each invoice group
+for inv in invoices:
+    r = current_row
+    ws.merge_cells(f'A{r}:G{r}')
+    label = f"{inv['date']} ({inv['invoice_no']})"
+    if inv['note']:
+        label += f" [{inv['note']}]"
 
-# === Summary Rows ===
-summary_start = row + len(sorted_codes) + 1
+    cell = ws.cell(row=r, column=1, value=f"SUB-TOTAL  {label}")
+    cell.font = header_font; cell.alignment = right_align
+    cell.border = thin_border; cell.fill = subtotal_fill
+    for c in range(2, 8):
+        ws.cell(row=r, column=c).border = thin_border
+        ws.cell(row=r, column=c).fill = subtotal_fill
 
-# SUB-TOTAL
-r = summary_start
-ws.merge_cells(f'A{r}:E{r}')
-ws.cell(row=r, column=1, value='金额 SUB-TOTAL').font = header_font
-ws.cell(row=r, column=1).alignment = right_align
-ws.cell(row=r, column=1).fill = subtotal_fill
-ws.cell(row=r, column=1).border = thin_border
-for c in range(2, 6):
-    ws.cell(row=r, column=c).border = thin_border
-    ws.cell(row=r, column=c).fill = subtotal_fill
+    cell = ws.cell(row=r, column=8, value='')
+    cell.border = thin_border; cell.fill = subtotal_fill
 
-grand_subtotal = 0
-for i, inv in enumerate(invoices):
-    col_qty = 6 + i * 2
-    col_amt = col_qty + 1
-    ws.cell(row=r, column=col_qty).border = thin_border
-    ws.cell(row=r, column=col_qty).fill = subtotal_fill
-    cell = ws.cell(row=r, column=col_amt, value=inv['subtotal'])
+    cell = ws.cell(row=r, column=9, value=inv['subtotal'])
     cell.font = header_font; cell.alignment = right_align
     cell.border = thin_border; cell.number_format = '$#,##0.00'
     cell.fill = subtotal_fill
-    grand_subtotal += inv['subtotal']
+    current_row += 1
 
-cell = ws.cell(row=r, column=total_col_idx, value=grand_subtotal)
-cell.font = Font(name='Arial', size=10, bold=True)
-cell.alignment = right_align; cell.border = thin_border
-cell.number_format = '$#,##0.00'; cell.fill = subtotal_fill
-
-# GST
-r = summary_start + 1
-ws.merge_cells(f'A{r}:E{r}')
-ws.cell(row=r, column=1, value='另加消费税9% Add GST 9%').font = header_font
-ws.cell(row=r, column=1).alignment = right_align
-ws.cell(row=r, column=1).fill = subtotal_fill
-ws.cell(row=r, column=1).border = thin_border
-for c in range(2, 6):
-    ws.cell(row=r, column=c).border = thin_border
-    ws.cell(row=r, column=c).fill = subtotal_fill
-
-grand_gst = 0
-for i, inv in enumerate(invoices):
-    col_qty = 6 + i * 2
-    col_amt = col_qty + 1
-    ws.cell(row=r, column=col_qty).border = thin_border
-    ws.cell(row=r, column=col_qty).fill = subtotal_fill
-    cell = ws.cell(row=r, column=col_amt, value=inv['gst'])
+    # GST row
+    r = current_row
+    ws.merge_cells(f'A{r}:G{r}')
+    cell = ws.cell(row=r, column=1, value=f"GST 9%  {label}")
+    cell.font = header_font; cell.alignment = right_align
+    cell.border = thin_border; cell.fill = subtotal_fill
+    for c in range(2, 8):
+        ws.cell(row=r, column=c).border = thin_border
+        ws.cell(row=r, column=c).fill = subtotal_fill
+    cell = ws.cell(row=r, column=8, value='')
+    cell.border = thin_border; cell.fill = subtotal_fill
+    cell = ws.cell(row=r, column=9, value=inv['gst'])
     cell.font = header_font; cell.alignment = right_align
     cell.border = thin_border; cell.number_format = '$#,##0.00'
     cell.fill = subtotal_fill
-    grand_gst += inv['gst']
+    current_row += 1
 
-cell = ws.cell(row=r, column=total_col_idx, value=round(grand_gst, 2))
-cell.font = Font(name='Arial', size=10, bold=True)
-cell.alignment = right_align; cell.border = thin_border
-cell.number_format = '$#,##0.00'; cell.fill = subtotal_fill
-
-# TOTAL
-r = summary_start + 2
-ws.merge_cells(f'A{r}:E{r}')
-ws.cell(row=r, column=1, value='总金额 TOTAL').font = Font(name='Arial', size=11, bold=True)
-ws.cell(row=r, column=1).alignment = right_align
-ws.cell(row=r, column=1).fill = total_fill
-ws.cell(row=r, column=1).border = thin_border
-for c in range(2, 6):
-    ws.cell(row=r, column=c).border = thin_border
-    ws.cell(row=r, column=c).fill = total_fill
-
-grand_total = 0
-for i, inv in enumerate(invoices):
-    col_qty = 6 + i * 2
-    col_amt = col_qty + 1
-    ws.cell(row=r, column=col_qty).border = thin_border
-    ws.cell(row=r, column=col_qty).fill = total_fill
-    cell = ws.cell(row=r, column=col_amt, value=inv['total'])
+    # Total row
+    r = current_row
+    ws.merge_cells(f'A{r}:G{r}')
+    cell = ws.cell(row=r, column=1, value=f"TOTAL  {label}")
+    cell.font = Font(name='Arial', size=11, bold=True); cell.alignment = right_align
+    cell.border = thin_border; cell.fill = total_fill
+    for c in range(2, 8):
+        ws.cell(row=r, column=c).border = thin_border
+        ws.cell(row=r, column=c).fill = total_fill
+    cell = ws.cell(row=r, column=8, value='')
+    cell.border = thin_border; cell.fill = total_fill
+    cell = ws.cell(row=r, column=9, value=inv['total'])
     cell.font = Font(name='Arial', size=11, bold=True); cell.alignment = right_align
     cell.border = Border(left=Side(style='thin'), right=Side(style='thin'),
                          top=Side(style='thin'), bottom=Side(style='double'))
     cell.number_format = '$#,##0.00'; cell.fill = total_fill
-    grand_total += inv['total']
+    current_row += 1
 
-cell = ws.cell(row=r, column=total_col_idx, value=round(grand_total, 2))
-cell.font = Font(name='Arial', size=12, bold=True)
-cell.alignment = right_align
+    # Blank separator
+    current_row += 1
+
+# === Grand Total ===
+r = current_row
+ws.merge_cells(f'A{r}:G{r}')
+cell = ws.cell(row=r, column=1, value='总合计 GRAND TOTAL')
+cell.font = Font(name='Arial', size=12, bold=True); cell.alignment = right_align
+cell.border = thin_border; cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+for c in range(2, 8):
+    ws.cell(row=r, column=c).border = thin_border
+    ws.cell(row=r, column=c).fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+cell = ws.cell(row=r, column=8, value='')
+cell.border = thin_border
+cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
+
+grand_total = round(sum(inv['total'] for inv in invoices), 2)
+cell = ws.cell(row=r, column=9, value=grand_total)
+cell.font = Font(name='Arial', size=12, bold=True); cell.alignment = right_align
 cell.border = Border(left=Side(style='thin'), right=Side(style='thin'),
                      top=Side(style='thin'), bottom=Side(style='double'))
-cell.number_format = '$#,##0.00'; cell.fill = total_fill
+cell.number_format = '$#,##0.00'
+cell.fill = PatternFill(start_color='C6EFCE', end_color='C6EFCE', fill_type='solid')
 
 # Print setup
 ws.page_setup.orientation = 'landscape'
 ws.page_setup.fitToWidth = 1
 ws.page_setup.fitToHeight = 1
+
+# Freeze header
+ws.freeze_panes = 'A5'
+
+# Auto filter
+ws.auto_filter.ref = f'A4:I{row + len(all_rows) - 1}'
 
 output_path = '/home/user/JoeyZzz/invoice_summary.xlsx'
 wb.save(output_path)
